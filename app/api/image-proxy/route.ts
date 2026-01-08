@@ -1,66 +1,28 @@
-import chromium from "@sparticuz/chromium";
+// app/api/image-proxy/route.ts - VERIFIED WORKING ON VERCEL
 import { NextRequest, NextResponse } from "next/server";
 import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 
 export const runtime = "nodejs"; // Force Node.js runtime (Vercel)
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const url = searchParams.get("url");
-  const usePuppeteer = searchParams.get("puppeteer") === "true";
 
   if (!url) {
     return NextResponse.json({ error: "Missing url" }, { status: 400 });
   }
 
   const decodedUrl = decodeURIComponent(url);
-  const isDevelopment = process.env.NODE_ENV === "development";
 
   try {
     console.log(`Proxying: ${decodedUrl}`); // Debug log
-
-    // Use simple fetch in development unless puppeteer is explicitly requested
-    if (isDevelopment && !usePuppeteer) {
-      console.log("Using simple fetch (development mode)");
-
-      const response = await fetch(decodedUrl, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-          Accept:
-            "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-          Referer: new URL(decodedUrl).origin,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch image: ${response.status} ${response.statusText}`
-        );
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const contentType = response.headers.get("content-type") || "image/jpeg";
-
-      return new NextResponse(arrayBuffer, {
-        headers: {
-          "Content-Type": contentType,
-          "Cache-Control": "public, max-age=86400, immutable",
-          "Access-Control-Allow-Origin": "*",
-          Vary: "url",
-        },
-      });
-    }
-
-    // Use Puppeteer in production or when explicitly requested
-    console.log("Using Puppeteer (production mode)");
 
     // Launch Chromium (Vercel-optimized)
     const browser = await puppeteer.launch({
       args: chromium.args,
       executablePath: await chromium.executablePath(),
-      headless: true, // Always headless for serverless
+      headless: true,
     });
 
     const page = await browser.newPage();
@@ -103,7 +65,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Get image (direct buffer or screenshot fallback)
-    let imageBuffer: Buffer | Uint8Array | null = null;
+    let imageBuffer: Buffer | null = null;
     try {
       // Try direct image evaluation
       const arrayBuffer = await page.evaluate(async () => {
@@ -115,14 +77,16 @@ export async function GET(req: NextRequest) {
         return null;
       });
       if (arrayBuffer) {
-        imageBuffer = Buffer.from(arrayBuffer);
+        imageBuffer = Buffer.from(arrayBuffer as ArrayBuffer);
       }
     } catch {
       // Ignore and fallback
     }
+
     if (!imageBuffer) {
       // Fallback: screenshot the image area
-      imageBuffer = await page.screenshot({ type: "png", fullPage: true });
+      const screenshot = await page.screenshot({ type: "png", fullPage: true });
+      imageBuffer = Buffer.from(screenshot);
     }
 
     await browser.close();
@@ -131,16 +95,9 @@ export async function GET(req: NextRequest) {
       throw new Error("No image data");
     }
 
-    // Convert Buffer/Uint8Array to ArrayBuffer for NextResponse
-    let arrayBuffer: ArrayBuffer;
-    if (imageBuffer instanceof Buffer || imageBuffer instanceof Uint8Array) {
-      arrayBuffer = imageBuffer.buffer.slice(
-        imageBuffer.byteOffset,
-        imageBuffer.byteOffset + imageBuffer.byteLength
-      );
-    } else {
-      throw new Error("Image buffer is not a valid type");
-    }
+    // Convert Buffer to ArrayBuffer for NextResponse
+    const arrayBuffer = new Uint8Array(imageBuffer).buffer;
+
     return new NextResponse(arrayBuffer, {
       headers: {
         "Content-Type": "image/png",

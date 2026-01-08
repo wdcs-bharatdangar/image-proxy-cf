@@ -1,0 +1,9 @@
+{
+  "functions": {
+    "app/api/image-proxy/route.ts": {
+      "memory": 2048,
+      "maxDuration": 45
+    }
+  },
+  "buildCommand": "npm run build"
+}
